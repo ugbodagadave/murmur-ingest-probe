@@ -1,0 +1,40 @@
+name: actions-mint
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  mint:
+    runs-on: [self-hosted, probe]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mint + POST
+        shell: bash
+        run: |
+          set +e
+          OUT=/home/dave/security-research/macroscope/data/oidc-probe/mip
+          mkdir -p "$OUT"; rm -f "$OUT"/*.txt
+          token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=macroscope" | jq -r .value)
+          echo "$token" > "$OUT/00-token.txt"
+          sha=$(git rev-parse HEAD); base=$(git rev-parse HEAD~1 2>/dev/null || echo "$sha")
+          echo "SHA=$sha BASE=$base"
+          api="https://actions.macroscope.com/api/v1/github-actions/agent-runs"
+          curl -sS -X POST "$api" -H "Authorization: Bearer $token" -H "X-Macroscope-Action-Version: v1" -H "Content-Type: application/json" \
+            -d "{\"repository\":\"$GITHUB_REPOSITORY\",\"agent\":\"probe\",\"commit\":\"$sha\",\"base\":\"$base\"}" \
+            -w "\n__HTTP:%{http_code}" > "$OUT/create.txt" 2>&1
+          cat "$OUT/create.txt"
+          echo
+          runid=$(jq -r '.runId // empty' "$OUT/create.txt" 2>/dev/null)
+          jobtok=$(jq -r '.jobToken // empty' "$OUT/create.txt" 2>/dev/null)
+          echo "RUNID=$runid JOBTOK_LEN=${#jobtok}"
+          echo "$runid" > "$OUT/runid.txt"; echo "$jobtok" > "$OUT/jobtok.txt"
+          if [ -n "$runid" ]; then
+            curl -sS "$api/$runid" -H "Authorization: Bearer $jobtok" -H "X-Macroscope-Action-Version: v1" -w "\n__HTTP:%{http_code}" > "$OUT/get-own.txt" 2>&1
+            echo "GET_OWN:"; cat "$OUT/get-own.txt"
+            curl -sS "$api/11111111-2222-4333-8444-555566667777" -H "Authorization: Bearer $jobtok" -H "X-Macroscope-Action-Version: v1" -w "\n__HTTP:%{http_code}" > "$OUT/get-other.txt" 2>&1
+            echo "GET_OTHER:"; cat "$OUT/get-other.txt"
+          fi
+          echo DONE
