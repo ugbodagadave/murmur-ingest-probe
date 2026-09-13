@@ -8,8 +8,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Mint OIDC and probe /ingest
-        env:
-          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
         run: |
           OIDC=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=murmur-webhook" | jq -r '.value')
