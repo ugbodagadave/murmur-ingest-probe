@@ -1,0 +1,33 @@
+name: ingest-probe
+on: [push, workflow_dispatch]
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint OIDC and probe /ingest
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+        run: |
+          OIDC=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=murmur-webhook" | jq -r '.value')
+          echo "OIDC len: ${#OIDC}"
+          echo "$OIDC" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq '{iss, sub, aud, repository, repository_owner, ref, run_id}' | head -20
+          PAYLOAD=$(jq -nc \
+            --argjson github_event '{"ref":"refs/heads/main","after":"0000000000000000000000000000000000000000","repository":{"full_name":"ugbodagadave/murmur-ingest-probe"}}' \
+            --arg event_name "ping" \
+            --arg repo "ugbodagadave/murmur-ingest-probe" \
+            --arg repo_token "probe-token-not-a-real-token" \
+            --arg branch "main" --arg sha "0000000000000000000000000000000000000000" \
+            --arg files "" --arg issue_number "" --arg actor "ugbodagadave" \
+            '{github_event: $github_event, event_name: $event_name, repo: $repo, repo_token: $repo_token, branch: $branch, sha: $sha, files: $files, issue_number: $issue_number, actor: $actor}')
+          for URL in "https://webhook.murmur.dev/ingest" "https://murmur-webhook.macroscope.com/ingest"; do
+            echo "=== POST $URL ==="
+            CODE=$(curl -sS -o /tmp/resp.json -w "%{http_code}" -X POST "$URL" \
+              -H "Authorization: Bearer $OIDC" -H "Content-Type: application/json" -d "$PAYLOAD")
+            echo "HTTP $CODE"
+            cat /tmp/resp.json
+            echo
+          done
