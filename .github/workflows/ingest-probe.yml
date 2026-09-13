@@ -4,4 +4,4 @@ jobs:
   probe:
     runs-on: ubuntu-22.04
     steps:
-      - run: echo "hello from runner"
+      - run: echo "ingest probe v2"
