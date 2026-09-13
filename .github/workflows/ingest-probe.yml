@@ -2,6 +2,6 @@ name: ingest-probe
 on: [push, workflow_dispatch]
 jobs:
   probe:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - run: echo "hello from runner"
